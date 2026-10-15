@@ -100,9 +100,9 @@ def test(shift):
         
     # Get pdf filenames
     pdfs = os.listdir(os.path.join('static', 'papers', shift))
-    phys_pdf = next((p for p in pdfs if 'Physics' in p or '3' in p), '')
-    chem_pdf = next((p for p in pdfs if 'Chemistry' in p or '4' in p), '')
-    math_pdf = next((p for p in pdfs if 'Mathematics' in p or '5' in p), '')
+    phys_pdf = next((p for p in pdfs if 'physics' in p.lower()), '')
+    chem_pdf = next((p for p in pdfs if 'chemistry' in p.lower()), '')
+    math_pdf = next((p for p in pdfs if 'mathematics' in p.lower()), '')
     return render_template('test.html', shift=shift, phys_pdf=phys_pdf, chem_pdf=chem_pdf, math_pdf=math_pdf, locations=locations_db.get(shift, {}))
 
 def evaluate_mcq(u_ans, real_ans):
@@ -251,12 +251,6 @@ def answer_key(shift, subject):
         basename = os.path.basename(pdf_path)
         base_lower = basename.lower()
         if sub_lower in base_lower:
-            return send_file(pdf_path)
-        if subject == 'Physics' and '3' in basename:
-            return send_file(pdf_path)
-        if subject == 'Chemistry' and '4' in basename:
-            return send_file(pdf_path)
-        if subject == 'Mathematics' and '5' in basename:
             return send_file(pdf_path)
             
     return "Subject PDF not found", 404
