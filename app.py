@@ -105,6 +105,42 @@ def test(shift):
     math_pdf = next((p for p in pdfs if 'Mathematics' in p or '5' in p), '')
     return render_template('test.html', shift=shift, phys_pdf=phys_pdf, chem_pdf=chem_pdf, math_pdf=math_pdf, locations=locations_db.get(shift, {}))
 
+def evaluate_mcq(u_ans, real_ans):
+    if not u_ans:
+        return False
+    if real_ans == 'Dropped':
+        return True
+    valid = [opt.strip() for opt in str(real_ans).split(',') if opt.strip()]
+    return u_ans in valid
+
+def evaluate_numeric(u_ans, real_ans):
+    if not u_ans:
+        return False
+    real_str = str(real_ans).strip()
+    if real_str == 'Dropped':
+        return True
+    if 'any' in real_str.lower():
+        try:
+            return float(u_ans) >= 0
+        except ValueError:
+            return False
+    if 'or' in real_str.lower():
+        parts = re.findall(r'[-+]?\d*\.?\d+', real_str)
+        try:
+            u_float = float(u_ans)
+            for p in parts:
+                if abs(u_float - float(p)) < 1e-4:
+                    return True
+        except ValueError:
+            if u_ans.strip() in [p.strip() for p in parts]:
+                return True
+        return False
+    # Standard numerical comparison
+    try:
+        return abs(float(u_ans) - float(real_str)) < 1e-4
+    except ValueError:
+        return u_ans.strip() == real_str
+
 @app.route('/submit', methods=['POST'])
 def submit():
     data = request.json
@@ -130,58 +166,43 @@ def submit():
         
         # Real answers for this subject
         real_ans_list = answers_db[shift].get(subject, [])
-        # We assume the first 20 in the list are MCQs, the next up to 10 are numericals
         mcq_ans = real_ans_list[:20]
-        num_ans = real_ans_list[20:30]
+        num_ans = real_ans_list[20:25]
         
         subj_data = user_answers.get(subject, {'mcq': {}, 'num': {}})
         
-        # Evaluate MCQs
+        # Evaluate MCQs (20 questions: +4 / -1)
         for i in range(20):
             q_num = str(i + 1)
             u_ans = subj_data['mcq'].get(q_num, '').strip()
             if not u_ans:
                 unattempted += 1
             else:
-                if i < len(mcq_ans) and u_ans == mcq_ans[i]:
+                correct_target = mcq_ans[i] if i < len(mcq_ans) else 'N/A'
+                if evaluate_mcq(u_ans, correct_target):
                     score += 4
                     correct += 1
                 else:
                     score -= 1
                     incorrect += 1
-                    mistakes.append({'subject': subject, 'q_num': f"Q{start_q + i}", 'user_ans': u_ans, 'correct_ans': mcq_ans[i] if i < len(mcq_ans) else 'N/A'})
+                    mistakes.append({'subject': subject, 'q_num': f"Q{start_q + i}", 'user_ans': u_ans, 'correct_ans': correct_target})
                     
-        # Evaluate Numericals (only up to 5 allowed, JS should restrict but we just evaluate what is sent)
+        # Evaluate Numericals (5 questions: +4 / 0)
         attempted_num_count = 0
-        for i in range(10):
+        for i in range(5):
             q_num = str(i + 1)
             u_ans = subj_data['num'].get(q_num, '').strip()
             if u_ans:
                 attempted_num_count += 1
-                if attempted_num_count <= 5:
-                    if i < len(num_ans):
-                        try:
-                            # Compare as float
-                            if float(u_ans) == float(num_ans[i]):
-                                score += 4
-                                correct += 1
-                            else:
-                                incorrect += 1
-                                mistakes.append({'subject': subject, 'q_num': f"Q{start_q + 20 + i}", 'user_ans': u_ans, 'correct_ans': num_ans[i]})
-                        except ValueError:
-                            # Fallback to string compare
-                            if u_ans == num_ans[i]:
-                                score += 4
-                                correct += 1
-                            else:
-                                incorrect += 1
-                                mistakes.append({'subject': subject, 'q_num': f"Q{start_q + 20 + i}", 'user_ans': u_ans, 'correct_ans': num_ans[i]})
-                    else:
-                        incorrect += 1
-                        mistakes.append({'subject': subject, 'q_num': f"Q{start_q + 20 + i}", 'user_ans': u_ans, 'correct_ans': 'N/A'})
-        
-        # Add to unattempted
-        unattempted += (10 - attempted_num_count if attempted_num_count < 10 else 0)
+                correct_target = num_ans[i] if i < len(num_ans) else 'N/A'
+                if evaluate_numeric(u_ans, correct_target):
+                    score += 4
+                    correct += 1
+                else:
+                    incorrect += 1
+                    mistakes.append({'subject': subject, 'q_num': f"Q{start_q + 20 + i}", 'user_ans': u_ans, 'correct_ans': correct_target})
+            else:
+                unattempted += 1
         
         results[subject] = {
             'score': score,
@@ -212,9 +233,24 @@ def answer_key(shift, subject):
     if not os.path.exists(shift_dir):
         return "Shift not found", 404
         
+    sub_lower = subject.lower()
+    
+    # Check for Answer Key
+    if sub_lower in ['key', 'answer_key', 'answerkey']:
+        key_pdf = os.path.join(shift_dir, 'Answer_Key.pdf')
+        if os.path.exists(key_pdf):
+            return send_file(key_pdf)
+            
+    # Check for Full Paper
+    if sub_lower in ['full', 'full_paper', 'fullpaper']:
+        full_pdf = os.path.join(shift_dir, 'Full_Paper.pdf')
+        if os.path.exists(full_pdf):
+            return send_file(full_pdf)
+            
     for pdf_path in glob.glob(os.path.join(shift_dir, '*.pdf')):
         basename = os.path.basename(pdf_path)
-        if subject in basename:
+        base_lower = basename.lower()
+        if sub_lower in base_lower:
             return send_file(pdf_path)
         if subject == 'Physics' and '3' in basename:
             return send_file(pdf_path)
